@@ -3,6 +3,7 @@
 const path = require('path');
 const express = require('express');
 const { open, get } = require('./src/db');
+const VersionCompare = require('./public/compare.js');
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'data', 'app.db');
@@ -318,6 +319,63 @@ app.get('/api/versions/:id', (req, res) => {
   if (!snap) return err(res, 404, '版本不存在');
   res.json(snap);
 });
+
+/* ------------------------- 版本亮度比较（只读） ------------------------ */
+
+// 同时支持 GET（query）与 POST（JSON body）；参数名接受全称与简写
+function readCompareInput(req) {
+  const src = { ...(req.query || {}), ...(req.body || {}) };
+  const pick = (...keys) => {
+    for (const k of keys) {
+      if (src[k] !== undefined) return src[k];
+    }
+    return undefined;
+  };
+  return {
+    versionA: pick('version_a', 'a'),
+    versionB: pick('version_b', 'b'),
+    start: pick('start'),
+    end: pick('end'),
+    at: pick('at', 'time'),
+    threshold: pick('threshold'),
+  };
+}
+
+function compareHandler(req, res) {
+  const input = readCompareInput(req);
+
+  const idA = toPosInt(input.versionA);
+  if (Number.isNaN(idA)) {
+    return err(res, 400, `版本 A 编号无效：${JSON.stringify(input.versionA)}（须为已发布版本编号）`);
+  }
+  const idB = toPosInt(input.versionB);
+  if (Number.isNaN(idB)) {
+    return err(res, 400, `版本 B 编号无效：${JSON.stringify(input.versionB)}（须为已发布版本编号）`);
+  }
+
+  // 只读已发布快照：草稿 Cue、灯具与播放会话均不受影响
+  const snapA = loadVersionSnapshot(idA);
+  if (!snapA) return err(res, 404, `版本 ${idA} 不存在，请先发布`);
+  const snapB = loadVersionSnapshot(idB);
+  if (!snapB) return err(res, 404, `版本 ${idB} 不存在，请先发布`);
+
+  // 数字字段原样交给比较引擎（它接受数字或数字字符串，并能在报错中回显原始输入）
+  let result;
+  try {
+    result = VersionCompare.compareSnapshots(snapA, snapB, {
+      start: input.start,
+      end: input.end,
+      at: input.at,
+      threshold: input.threshold,
+    });
+  } catch (e) {
+    return err(res, 400, e.message);
+  }
+  res.json(result);
+}
+
+app.get('/api/compare', compareHandler);
+app.post('/api/compare', compareHandler);
 
 /* ------------------------------- 错误处理 ------------------------------ */
 

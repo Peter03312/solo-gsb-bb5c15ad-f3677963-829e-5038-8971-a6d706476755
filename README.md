@@ -78,6 +78,16 @@ npm test                  # 运行灯光渐变引擎单元测试
 4. **排演播放**：选择版本后即可 ▶ 播放 / ⏸ 暂停 / ⏹ 回起点 / 拖动时间轴 / 输入秒数跳转，
    可切换 0.5× / 1× / 2× 速度；舞台模拟、亮度条与 Cue 状态（等待 / 渐变中 / 已触发）
    随时间实时更新。快捷键：页面空白处按空格播放/暂停。
+5. **版本比较（排演人员）**：在「版本比较」页输入**两个已发布版本**、非负起止秒数
+   （时窗）、时窗内的**查看时刻**与 **0～100 的亮度差阈值**：
+   - 页面显示查看时刻两版**逐灯亮度**（按灯具编号匹配）；
+   - 列出时窗内各灯两版亮度差**严格大于阈值**的连续区间，区间用 `[ ] / ( )` 标明
+     端点包含性（交点处差值恰为阈值则该端点不含；瞬变 Cue 触发瞬间按触发后亮度判定）；
+   - 阈值交点与 Cue 触发时刻均为**解析计算**（分段线性求根），不依赖固定间隔采样；
+   - 只存在于一版的灯具单列为**配置差异**，缺失不当作熄灭；完全无差异时区间为空；
+   - 时窗**起点不能大于终点**，查看时刻须在时窗内，阈值越界 / 无效数字 / 版本不存在
+     均会明确报错；相同两个版本也可比较；**零长度时窗**（起点=终点）只返回该时刻亮度；
+   - 比较只读已发布快照，**不改动草稿或播放会话**。
 
 ## HTTP API 摘要
 
@@ -93,19 +103,87 @@ npm test                  # 运行灯光渐变引擎单元测试
 | POST | `/api/versions` | 冻结当前草稿，发布不可变版本 |
 | GET | `/api/versions` | 版本列表 |
 | GET | `/api/versions/:id` | 版本完整快照（灯具 + Cue，供播放器使用） |
+| GET/POST | `/api/compare` | 两个已发布版本的逐灯亮度比较（只读，见下） |
+
+### 版本比较 API：`/api/compare`
+
+只读两个已发布快照（相同版本也可比较），不影响草稿或播放会话。参数可走 query（GET）
+或 JSON body（POST），数字可传数字或数字字符串：
+
+| 参数 | 别名 | 说明 |
+| --- | --- | --- |
+| `version_a` | `a` | 版本 A 编号（正整数，须已发布） |
+| `version_b` | `b` | 版本 B 编号（正整数，须已发布） |
+| `start` | — | 时窗起点（非负秒数，`start <= end`） |
+| `end` | — | 时窗终点（非负秒数） |
+| `at` | `time` | 查看时刻（须落在 `[start, end]` 内） |
+| `threshold` | — | 亮度差阈值，`0～100`；列出严格大于该值的区间 |
+
+返回：
+
+- `versions`：两版编号与备注；`window`：时窗及是否零长度；`at`、`threshold` 回显；
+- `brightnesses`：查看时刻共有灯具逐灯亮度 `{light_id, name_a, name_b, brightness_a,
+  brightness_b, abs_diff}`；
+- `intervals`：时窗内亮度差严格大于阈值的连续区间（空结果为 `[]`），每项含
+  `{light_id, name_a, name_b, start, end, start_included, end_included, max_abs_diff}`；
+  端点包含性即“严格大于”在边界/Cue 触发点上的精确判定；
+- `config_differences`：仅一版存在的灯具 `{light_id, present_in: "a"|"b", name,
+  brightness_at}`；缺失不当作熄灭，故不并入逐灯对比。
+
+区间边界与 Cue 触发时刻由分段线性差值**解析求根**得到，不做固定间隔采样。
+零长度时窗只返回 `brightnesses`，`intervals` 恒为空。
+
+调用示例：
+
+```bash
+# GET（query）
+curl "http://localhost:3000/api/compare?version_a=1&version_b=2&start=0&end=60&at=12.5&threshold=10"
+
+# POST（JSON body）
+curl -X POST http://localhost:3000/api/compare \
+  -H 'Content-Type: application/json' \
+  -d '{"version_a":1,"version_b":2,"start":0,"end":60,"at":12.5,"threshold":10}'
+```
+
+```jsonc
+// 响应示例（节选）
+{
+  "versions": { "a": {"id":1,"label":"首演"}, "b": {"id":2,"label":"复排"} },
+  "window": { "start": 0, "end": 60, "zero_length": false },
+  "at": 12.5,
+  "threshold": 10,
+  "brightnesses": [
+    { "light_id": 1, "name_a": "面光1", "name_b": "面光1",
+      "brightness_a": 100, "brightness_b": 80, "abs_diff": 20 }
+  ],
+  "intervals": [
+    { "light_id": 1, "name_a": "面光1", "name_b": "面光1",
+      "start": 3.000001, "end": 60, "start_included": false, "end_included": true,
+      "max_abs_diff": 40 }
+  ],
+  "config_differences": [
+    { "light_id": 3, "present_in": "b", "name": "新增侧光", "brightness_at": 0 }
+  ]
+}
+```
+
+非法参数（起点大于终点、查看时刻越界、无效数字、阈值越界）返回 `400`；
+版本编号无效或不存在返回 `400/404`；错误体形如 `{"error": "具体中文原因"}`。
 
 所有错误返回 `400/404/409` 与形如 `{"error": "具体中文原因"}` 的 JSON。
 
 ## 目录结构
 
 ```
-server.js            Express 服务与 API、输入校验、版本快照事务
+server.js            Express 服务与 API、输入校验、版本快照事务、版本比较 API
 src/db.js            SQLite 初始化与表结构
 public/engine.js     纯函数灯光渐变引擎（浏览器/Node 共用，含线性渐变与中途接管规则）
+public/compare.js    纯函数版本比较引擎（分段线性解析求根、端点包含性、配置差异）
 public/index.html    单页界面
 public/styles.css    剧场暗色主题
-public/app.js        前端交互与基于 requestAnimationFrame 的播放器
+public/app.js        前端交互、基于 requestAnimationFrame 的播放器与版本比较页
 test/engine.test.js  渐变规则单元测试
+test/compare.test.js 版本比较（区间界定/端点/校验）单元测试
 Dockerfile           镜像构建（依赖、初始化、启动）
 docker-compose.yml   一键编排
 ```

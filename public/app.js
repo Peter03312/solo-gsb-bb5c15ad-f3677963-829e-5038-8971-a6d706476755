@@ -210,6 +210,7 @@ async function loadVersions({ keepSelection = true } = {}) {
   state.versions = await api('GET', '/api/versions');
   renderVersions();
   renderVersionOptions(keepSelection ? prev : null);
+  renderCompareOptions();
 }
 
 function renderVersions() {
@@ -438,6 +439,118 @@ function renderPlayer() {
     .join('');
 }
 
+/* ----------------------------- 版本比较 ----------------------------- */
+
+function renderCompareOptions() {
+  const fill = (sel, preferId) => {
+    if (state.versions.length === 0) {
+      sel.innerHTML = '<option value="">— 暂无已发布版本 —</option>';
+      return;
+    }
+    sel.innerHTML = state.versions
+      .map((v) => `<option value="${v.id}">#${v.id} ${esc(v.label)}</option>`)
+      .join('');
+    if (preferId && state.versions.some((v) => String(v.id) === String(preferId))) {
+      sel.value = String(preferId);
+    }
+  };
+  const prevA = $('cmp-version-a').value;
+  const prevB = $('cmp-version-b').value;
+  fill($('cmp-version-a'), prevA);
+  fill($('cmp-version-b'), prevB || (state.versions[1] ? state.versions[1].id : null));
+  if (!prevA && state.versions[0]) $('cmp-version-a').value = String(state.versions[0].id);
+}
+
+const lbrk = (included) => (included ? '[' : '(');
+const rbrk = (included) => (included ? ']' : ')');
+
+function renderCompareResult(r) {
+  if (!r) {
+    $('compare-meta').textContent = '选择两个已发布版本并填写时窗、查看时刻与阈值后点击「比较」。';
+    $('cmp-brightness-table').querySelector('tbody').innerHTML =
+      '<tr><td colspan="4" class="muted">尚未比较</td></tr>';
+    $('cmp-interval-table').querySelector('tbody').innerHTML =
+      '<tr><td colspan="4" class="muted">尚未比较</td></tr>';
+    $('cmp-config-table').querySelector('tbody').innerHTML =
+      '<tr><td colspan="3" class="muted">尚未比较</td></tr>';
+    return;
+  }
+
+  const va = r.versions.a;
+  const vb = r.versions.b;
+
+  $('compare-meta').textContent =
+    `版本 A：#${va.id} ${va.label}　vs　版本 B：#${vb.id} ${vb.label}　` +
+    `时窗 [${fmt(r.window.start)}, ${fmt(r.window.end)}] s` +
+    (r.window.zero_length ? '（零长度时窗，仅返回查看时刻亮度）' : '') +
+    `，查看时刻 ${fmt(r.at)} s，阈值 > ${r.threshold}`;
+
+  // 查看时刻逐灯亮度
+  $('cmp-brightness-table').querySelector('tbody').innerHTML = r.brightnesses.length
+    ? r.brightnesses
+        .map(
+          (row) => `
+        <tr>
+          <td>#${row.light_id} ${esc(row.name_a === row.name_b ? row.name_a : `${row.name_a} / ${row.name_b}`)}</td>
+          <td>${fmt(row.brightness_a)}</td>
+          <td>${fmt(row.brightness_b)}</td>
+          <td class="${row.abs_diff > r.threshold ? 'cmp-hot' : ''}">${fmt(row.abs_diff)}</td>
+        </tr>`
+        )
+        .join('')
+    : '<tr><td colspan="4" class="muted">两版没有编号相同的灯具</td></tr>';
+
+  // 超阈连续区间（空结果返回空表）
+  $('cmp-interval-table').querySelector('tbody').innerHTML = r.intervals.length
+    ? r.intervals
+        .map((iv) => {
+          const left = lbrk(iv.start_included);
+          const right = rbrk(iv.end_included);
+          return `
+        <tr>
+          <td>#${iv.light_id} ${esc(iv.name_a === iv.name_b ? iv.name_a : `${iv.name_a} / ${iv.name_b}`)}</td>
+          <td>${left}${fmt(iv.start)}, ${fmt(iv.end)}${right}</td>
+          <td>起点${iv.start_included ? '含' : '不含'}，终点${iv.end_included ? '含' : '不含'}</td>
+          <td>${fmt(iv.max_abs_diff)}</td>
+        </tr>`;
+        })
+        .join('')
+    : '<tr><td colspan="4" class="muted">无差异：时窗内没有亮度差严格大于阈值的区间</td></tr>';
+
+  // 配置差异
+  $('cmp-config-table').querySelector('tbody').innerHTML = r.config_differences.length
+    ? r.config_differences
+        .map(
+          (d) => `
+        <tr>
+          <td>#${d.light_id} ${esc(d.name)}</td>
+          <td>仅版本 ${d.present_in === 'a' ? 'A' : 'B'}</td>
+          <td>${fmt(d.brightness_at)}（缺失方不当作熄灭）</td>
+        </tr>`
+        )
+        .join('')
+    : '<tr><td colspan="3" class="muted">两版灯具配置一致</td></tr>';
+}
+
+$('form-compare').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  clearErr($('compare-error'));
+  const body = {
+    version_a: $('cmp-version-a').value,
+    version_b: $('cmp-version-b').value,
+    start: $('cmp-start').value,
+    end: $('cmp-end').value,
+    at: $('cmp-at').value,
+    threshold: $('cmp-threshold').value,
+  };
+  try {
+    const result = await api('POST', '/api/compare', body);
+    renderCompareResult(result);
+  } catch (err) {
+    showErr($('compare-error'), err.message);
+  }
+});
+
 /* ----------------------------- 启动 ----------------------------- */
 
 (async function init() {
@@ -452,6 +565,8 @@ function renderPlayer() {
     renderCues();
     renderVersions();
     renderVersionOptions(null);
+    renderCompareOptions();
+    renderCompareResult(null);
     if (state.versions.length > 0) {
       await loadSession(state.versions[0].id, true); // 默认加载最新版本，停在 0 秒
     } else {
