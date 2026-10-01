@@ -11,6 +11,7 @@
     <h1>🎭 小剧场灯光 Cue 排演</h1>
     <nav class="tabs">
       <button class="tab active" data-tab="player">排演播放</button>
+      <button class="tab" data-tab="compare">版本比较</button>
       <button class="tab" data-tab="lights">灯具录入</button>
       <button class="tab" data-tab="cues">草稿 Cue</button>
       <button class="tab" data-tab="publish">发布版本</button>
@@ -71,6 +72,56 @@
             </thead>
             <tbody></tbody>
           </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========================== 版本比较 ========================== -->
+    <section id="tab-compare" class="tab-panel">
+      <div class="card">
+        <h2>两个已发布版本逐灯亮度比较</h2>
+        <p class="muted">
+          只读已发布快照（不影响草稿与正在播放的会话）。按灯具编号匹配；区间由分段线性
+          精确求解（非固定间隔采样），列出时窗内亮度差<strong>严格大于</strong>阈值的连续区间及
+          端点是否包含。仅在一版存在的灯具单列为配置差异，缺失不按熄灭处理。
+        </p>
+        <form id="form-compare" class="cue-form">
+          <label>版本 A
+            <select id="cmp-version-a" required></select>
+          </label>
+          <label>版本 B
+            <select id="cmp-version-b" required></select>
+          </label>
+          <label>时窗起点 (s) <input type="number" id="cmp-start" min="0" step="0.1" value="0" required /></label>
+          <label>时窗终点 (s) <input type="number" id="cmp-end" min="0" step="0.1" value="10" required /></label>
+          <label>查看时刻 (s) <input type="number" id="cmp-view" min="0" step="0.1" value="0" required /></label>
+          <label>亮度差阈值 (0～100) <input type="number" id="cmp-threshold" min="0" max="100" step="0.1" value="10" required /></label>
+          <button class="primary" type="submit">比较两个版本</button>
+        </form>
+        <div id="compare-error" class="error-line" hidden></div>
+      </div>
+
+      <div id="compare-results" hidden>
+        <div class="card">
+          <h2 id="cmp-summary"></h2>
+          <div class="table-wrap">
+            <table id="cmp-levels">
+              <thead>
+                <tr><th>灯具</th><th>版本 A 亮度</th><th>版本 B 亮度</th><th>亮度差（绝对值）</th></tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>配置差异（仅在一版存在的灯具，不按熄灭处理）</h2>
+          <div id="cmp-config"></div>
+        </div>
+
+        <div class="card">
+          <h2>亮度差严格大于阈值的连续区间</h2>
+          <div id="cmp-intervals"></div>
         </div>
       </div>
     </section>

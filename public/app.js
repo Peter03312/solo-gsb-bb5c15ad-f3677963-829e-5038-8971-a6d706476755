@@ -231,15 +231,117 @@ function renderVersionOptions(preferId) {
   const sel = $('version-select');
   if (state.versions.length === 0) {
     sel.innerHTML = '<option value="">— 请先发布一个版本 —</option>';
+  } else {
+    sel.innerHTML = state.versions
+      .map((v) => `<option value="${v.id}">#${v.id} ${esc(v.label)}（${v.cue_count} 条 Cue）</option>`)
+      .join('');
+    if (preferId && state.versions.some((v) => String(v.id) === String(preferId))) {
+      sel.value = preferId;
+    }
+  }
+  renderCompareVersionOptions();
+}
+
+/* ----------------------------- 版本比较 ----------------------------- */
+
+function renderCompareVersionOptions() {
+  const html =
+    state.versions.length === 0
+      ? '<option value="">— 无已发布版本 —</option>'
+      : state.versions
+          .map((v) => `<option value="${v.id}">#${v.id} ${esc(v.label)}（${v.cue_count} 条 Cue）</option>`)
+          .join('');
+  $('cmp-version-a').innerHTML = html;
+  $('cmp-version-b').innerHTML = html;
+  // 默认 A 取最新、B 取次新（同一版本也允许比较）
+  if (state.versions.length > 0) $('cmp-version-a').value = String(state.versions[0].id);
+  if (state.versions.length > 1) $('cmp-version-b').value = String(state.versions[1].id);
+}
+
+const bracket = (included) => (included ? '[' : '(');
+const closeBracket = (included) => (included ? ']' : ')');
+
+$('form-compare').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  clearErr($('compare-error'));
+  const body = {
+    version_a: $('cmp-version-a').value,
+    version_b: $('cmp-version-b').value,
+    start: $('cmp-start').value,
+    end: $('cmp-end').value,
+    view_time: $('cmp-view').value,
+    threshold: $('cmp-threshold').value,
+  };
+  try {
+    const r = await api('POST', '/api/version-compare', body);
+    renderCompare(r);
+  } catch (errMsg) {
+    $('compare-results').hidden = true;
+    showErr($('compare-error'), '比较请求被拒绝：' + errMsg.message);
+  }
+});
+
+function renderCompare(r) {
+  $('compare-results').hidden = false;
+  $('cmp-summary').textContent =
+    `版本 A #${r.version_a.id}「${r.version_a.label}」 × 版本 B #${r.version_b.id}「${r.version_b.label}」` +
+    `　时窗 [${fmt(r.window.start)}, ${fmt(r.window.end)}] s` +
+    `　查看时刻 ${fmt(r.view_time)} s　阈值（严格大于）${r.threshold}`;
+
+  $('cmp-levels').querySelector('tbody').innerHTML = r.levels
+    .map(
+      (l) => `
+      <tr>
+        <td>#${l.light_id} ${esc(l.light_name)}</td>
+        <td>${fmt(l.brightness_a)}</td>
+        <td>${fmt(l.brightness_b)}</td>
+        <td class="${l.diff > r.threshold ? 'cmp-over' : ''}">${fmt(l.diff)}</td>
+      </tr>`
+    )
+    .join('');
+
+  const cfg = r.config_diff;
+  const cfgLine = (list, side) =>
+    list.length
+      ? list.map((l) => `#${l.light_id} ${esc(l.light_name)}`).join('、') + `（仅在版本 ${side}）`
+      : '';
+  $('cmp-config').innerHTML =
+    cfgLine(cfg.only_in_a, 'A') +
+    (cfg.only_in_a.length && cfg.only_in_b.length ? '<br>' : '') +
+    cfgLine(cfg.only_in_b, 'B') || '<p class="muted">两版灯具配置一致（编号与名称集合相同）。</p>';
+
+  const box = $('cmp-intervals');
+  if (r.intervals.length === 0) {
+    box.innerHTML = '<p class="muted">时窗内没有任何共有灯具的亮度差严格大于阈值（空区间）。</p>';
     return;
   }
-  sel.innerHTML = state.versions
-    .map((v) => `<option value="${v.id}">#${v.id} ${esc(v.label)}（${v.cue_count} 条 Cue）</option>`)
-    .join('');
-  if (preferId && state.versions.some((v) => String(v.id) === String(preferId))) {
-    sel.value = preferId;
-  }
+  box.innerHTML = `
+    <p class="muted">区间记号：方括号 [ ] 表示包含该端点，圆括号 ( ) 表示不包含；阈值交点本身不取。</p>
+    <div class="table-wrap">
+      <table id="cmp-interval-table">
+        <thead><tr><th>灯具</th><th>连续区间 (s)</th><th>端点包含性</th><th>区间内最大亮度差</th></tr></thead>
+        <tbody>
+          ${r.intervals
+            .map((row) =>
+              row.segments
+                .map(
+                  (s) => `
+                <tr>
+                  <td>#${row.light_id} ${esc(row.light_name)}</td>
+                  <td class="cmp-range">${bracket(s.start_included)}${fmt(s.start)}, ${fmt(s.end)}${closeBracket(s.end_included)}</td>
+                  <td>${s.start === s.end ? '仅该时刻' : `起点${s.start_included ? '包含' : '不包含'} / 终点${s.end_included ? '包含' : '不包含'}`}</td>
+                  <td>${fmt(s.max_diff)}</td>
+                </tr>`
+                )
+                .join('')
+            )
+            .join('')}
+        </tbody>
+      </table>
+    </div>`;
 }
+
+/* ----------------------------- 发布版本 ----------------------------- */
 
 $('form-publish').addEventListener('submit', async (e) => {
   e.preventDefault();

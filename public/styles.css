@@ -187,3 +187,7 @@ tr.done td { color: var(--muted); }
 .badge.waiting { color: #6f7290; }
 
 code { background: #14121d; padding: .1rem .35rem; border-radius: 4px; color: var(--amber-soft); }
+
+/* 版本比较 */
+.cmp-over { color: var(--amber); font-weight: 600; }
+.cmp-range { font-variant-numeric: tabular-nums; color: var(--amber-soft); }

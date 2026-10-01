@@ -3,6 +3,7 @@
 const path = require('path');
 const express = require('express');
 const { open, get } = require('./src/db');
+const { compareSnapshots } = require('./src/compare');
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'data', 'app.db');
@@ -317,6 +318,47 @@ app.get('/api/versions/:id', (req, res) => {
   const snap = loadVersionSnapshot(parseInt(req.params.id, 10));
   if (!snap) return err(res, 404, '版本不存在');
   res.json(snap);
+});
+
+/* --------------------------- 两版快照只读比较 --------------------------- */
+// 输入：{version_a, version_b, start, end, view_time, threshold}
+// 仅读取已发布快照，不改草稿或播放会话；区间按精确分段线性求解，不做固定间隔采样。
+app.post('/api/version-compare', (req, res) => {
+  const body = req.body;
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+    return err(res, 400, '请求体必须是 JSON 对象');
+  }
+
+  const idA = toPosInt(body.version_a);
+  const idB = toPosInt(body.version_b);
+  if (Number.isNaN(idA)) return err(res, 400, `版本 A 编号无效：${JSON.stringify(body.version_a)}（须为已发布版本编号）`);
+  if (Number.isNaN(idB)) return err(res, 400, `版本 B 编号无效：${JSON.stringify(body.version_b)}（须为已发布版本编号）`);
+
+  const t0 = toNum(body.start);
+  const t1 = toNum(body.end);
+  const view = toNum(body.view_time);
+  if (Number.isNaN(t0)) return err(res, 400, `时窗起点无效：${JSON.stringify(body.start)}（须为非负数字秒数）`);
+  if (Number.isNaN(t1)) return err(res, 400, `时窗终点无效：${JSON.stringify(body.end)}（须为非负数字秒数）`);
+  if (Number.isNaN(view)) return err(res, 400, `查看时刻无效：${JSON.stringify(body.view_time)}（须为数字秒数）`);
+  if (t0 < 0) return err(res, 400, `时窗起点非法：${t0}（不得为负）`);
+  if (t1 < 0) return err(res, 400, `时窗终点非法：${t1}（不得为负）`);
+  if (t0 > t1) return err(res, 400, `时窗起点 ${t0} 大于终点 ${t1}`);
+  if (view < t0 || view > t1) {
+    return err(res, 400, `查看时刻 ${view} 越界（须在时窗 [${t0}, ${t1}] 内）`);
+  }
+
+  const threshold = toNum(body.threshold);
+  if (Number.isNaN(threshold)) return err(res, 400, `亮度差阈值无效：${JSON.stringify(body.threshold)}（须为 0～100 的数字）`);
+  if (threshold < 0 || threshold > 100) {
+    return err(res, 400, `亮度差阈值 ${threshold} 越界（须在 0～100 之间）`);
+  }
+
+  const snapA = loadVersionSnapshot(idA);
+  if (!snapA) return err(res, 404, `版本 A 不存在：编号 ${idA} 未发布`);
+  const snapB = loadVersionSnapshot(idB);
+  if (!snapB) return err(res, 404, `版本 B 不存在：编号 ${idB} 未发布`);
+
+  res.json(compareSnapshots(snapA, snapB, { t0, t1, view, threshold }));
 });
 
 /* ------------------------------- 错误处理 ------------------------------ */
